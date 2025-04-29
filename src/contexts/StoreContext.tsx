@@ -1,37 +1,9 @@
-
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { supabase } from '@/integrations/supabase/client';
-import { Tables } from '@/integrations/supabase/types';
 import { useAuth } from './AuthContext';
 import { useToast } from '@/hooks/use-toast';
-
-// Define types using the generated Supabase types
-type Product = Tables<'products'>;
-type Category = Tables<'categories'>;
-type CartItem = Tables<'cart_items'> & { product?: Product };
-
-interface StoreContextType {
-  products: Product[];
-  featuredProducts: Product[];
-  categories: Category[];
-  cartItems: CartItem[];
-  loading: {
-    products: boolean;
-    categories: boolean;
-    cart: boolean;
-  };
-  error: {
-    products: string | null;
-    categories: string | null;
-    cart: string | null;
-  };
-  fetchProducts: (categorySlug?: string) => Promise<void>;
-  fetchCategories: () => Promise<void>;
-  fetchCartItems: () => Promise<void>;
-  addToCart: (productId: string, quantity?: number) => Promise<void>;
-  updateCartItem: (cartItemId: string, quantity: number) => Promise<void>;
-  removeFromCart: (cartItemId: string) => Promise<void>;
-}
+import { Product, Category, CartItem, StoreContextType } from '@/types/store';
+import * as productService from '@/services/productService';
+import * as cartService from '@/services/cartService';
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
@@ -73,64 +45,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setError(prev => ({ ...prev, products: null }));
     
     try {
-      let query = supabase.from('products').select('*');
-      
+      // If specific category, fetch products for that category
       if (categorySlug) {
-        if (categorySlug !== 'todos') {
-          // First check if we have categories loaded already
-          let categoryId: string | undefined;
-          
-          if (categories.length > 0) {
-            // Try to find category by exact ID match first
-            const exactMatch = categories.find(c => c.id === categorySlug);
-            if (exactMatch) {
-              categoryId = exactMatch.id;
-            } else {
-              // Try to find by slug (name converted to slug)
-              const slugMatch = categories.find(
-                c => c.name.toLowerCase().replace(/\s+/g, '-') === categorySlug.toLowerCase()
-              );
-              if (slugMatch) {
-                categoryId = slugMatch.id;
-              }
-            }
-          } else {
-            // Fetch categories first if we don't have them yet
-            const { data: categoriesData } = await supabase.from('categories').select('*');
-            
-            if (categoriesData && categoriesData.length > 0) {
-              setCategories(categoriesData);
-              
-              // Try to find by exact ID
-              const exactMatch = categoriesData.find(c => c.id === categorySlug);
-              if (exactMatch) {
-                categoryId = exactMatch.id;
-              } else {
-                // Try to find by slug
-                const slugMatch = categoriesData.find(
-                  c => c.name.toLowerCase().replace(/\s+/g, '-') === categorySlug.toLowerCase()
-                );
-                if (slugMatch) {
-                  categoryId = slugMatch.id;
-                }
-              }
-            }
-          }
-          
-          // Only apply category filter if we found a matching category ID
-          if (categoryId) {
-            query = query.eq('category_id', categoryId);
-          }
-        }
+        const fetchedProducts = await productService.fetchProductsByCategory(categorySlug, categories);
+        setProducts(fetchedProducts);
+      } else {
+        // Otherwise, fetch all products
+        const fetchedProducts = await productService.fetchAllProducts();
+        setProducts(fetchedProducts);
       }
-      
-      const { data, error } = await query;
-      
-      if (error) {
-        throw error;
-      }
-      
-      setProducts(data || []);
     } catch (err: any) {
       setError(prev => ({ ...prev, products: err.message }));
       console.error('Error fetching products:', err);
@@ -144,13 +67,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setError(prev => ({ ...prev, categories: null }));
     
     try {
-      const { data, error } = await supabase.from('categories').select('*');
-      
-      if (error) {
-        throw error;
-      }
-      
-      setCategories(data || []);
+      const fetchedCategories = await productService.fetchCategories();
+      setCategories(fetchedCategories);
     } catch (err: any) {
       setError(prev => ({ ...prev, categories: err.message }));
       console.error('Error fetching categories:', err);
@@ -166,19 +84,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setError(prev => ({ ...prev, cart: null }));
     
     try {
-      const { data, error } = await supabase
-        .from('cart_items')
-        .select(`
-          *,
-          product:product_id (*)
-        `)
-        .eq('user_id', user.id);
-      
-      if (error) {
-        throw error;
-      }
-      
-      setCartItems(data || []);
+      const fetchedCartItems = await cartService.fetchCartItems(user.id);
+      setCartItems(fetchedCartItems);
     } catch (err: any) {
       setError(prev => ({ ...prev, cart: err.message }));
       console.error('Error fetching cart items:', err);
@@ -208,17 +115,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         await updateCartItem(existingItem.id, existingItem.quantity + quantity);
       } else {
         // Add new item to cart
-        const { error } = await supabase
-          .from('cart_items')
-          .insert({
-            user_id: user.id,
-            product_id: productId,
-            quantity,
-          });
-        
-        if (error) {
-          throw error;
-        }
+        await cartService.addToCart(user.id, productId, quantity);
         
         toast({
           title: "Sucesso",
@@ -250,15 +147,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return removeFromCart(cartItemId);
       }
       
-      const { error } = await supabase
-        .from('cart_items')
-        .update({ quantity })
-        .eq('id', cartItemId)
-        .eq('user_id', user.id);
-      
-      if (error) {
-        throw error;
-      }
+      await cartService.updateCartItem(user.id, cartItemId, quantity);
       
       toast({
         title: "Sucesso",
@@ -285,15 +174,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setLoading(prev => ({ ...prev, cart: true }));
     
     try {
-      const { error } = await supabase
-        .from('cart_items')
-        .delete()
-        .eq('id', cartItemId)
-        .eq('user_id', user.id);
-      
-      if (error) {
-        throw error;
-      }
+      await cartService.removeFromCart(user.id, cartItemId);
       
       toast({
         title: "Sucesso",
