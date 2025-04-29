@@ -25,7 +25,7 @@ interface StoreContextType {
     categories: string | null;
     cart: string | null;
   };
-  fetchProducts: (categoryId?: string) => Promise<void>;
+  fetchProducts: (categorySlug?: string) => Promise<void>;
   fetchCategories: () => Promise<void>;
   fetchCartItems: () => Promise<void>;
   addToCart: (productId: string, quantity?: number) => Promise<void>;
@@ -68,15 +68,60 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [user]);
 
-  const fetchProducts = async (categoryId?: string) => {
+  const fetchProducts = async (categorySlug?: string) => {
     setLoading(prev => ({ ...prev, products: true }));
     setError(prev => ({ ...prev, products: null }));
     
     try {
       let query = supabase.from('products').select('*');
       
-      if (categoryId) {
-        query = query.eq('category_id', categoryId);
+      if (categorySlug) {
+        if (categorySlug !== 'todos') {
+          // First check if we have categories loaded already
+          let categoryId: string | undefined;
+          
+          if (categories.length > 0) {
+            // Try to find category by exact ID match first
+            const exactMatch = categories.find(c => c.id === categorySlug);
+            if (exactMatch) {
+              categoryId = exactMatch.id;
+            } else {
+              // Try to find by slug (name converted to slug)
+              const slugMatch = categories.find(
+                c => c.name.toLowerCase().replace(/\s+/g, '-') === categorySlug.toLowerCase()
+              );
+              if (slugMatch) {
+                categoryId = slugMatch.id;
+              }
+            }
+          } else {
+            // Fetch categories first if we don't have them yet
+            const { data: categoriesData } = await supabase.from('categories').select('*');
+            
+            if (categoriesData && categoriesData.length > 0) {
+              setCategories(categoriesData);
+              
+              // Try to find by exact ID
+              const exactMatch = categoriesData.find(c => c.id === categorySlug);
+              if (exactMatch) {
+                categoryId = exactMatch.id;
+              } else {
+                // Try to find by slug
+                const slugMatch = categoriesData.find(
+                  c => c.name.toLowerCase().replace(/\s+/g, '-') === categorySlug.toLowerCase()
+                );
+                if (slugMatch) {
+                  categoryId = slugMatch.id;
+                }
+              }
+            }
+          }
+          
+          // Only apply category filter if we found a matching category ID
+          if (categoryId) {
+            query = query.eq('category_id', categoryId);
+          }
+        }
       }
       
       const { data, error } = await query;

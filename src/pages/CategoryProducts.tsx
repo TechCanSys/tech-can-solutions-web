@@ -13,14 +13,15 @@ const CategoryProducts = () => {
   
   useEffect(() => {
     fetchCategories();
-    if (categoryId && categoryId !== 'todos') {
-      fetchProducts(categoryId);
-    } else {
-      fetchProducts();
-    }
-  }, [categoryId]);
+    fetchProducts(categoryId);
+  }, [categoryId, fetchProducts, fetchCategories]);
   
-  const currentCategory = categories.find(cat => cat.id === categoryId);
+  // Find the current category based on slug/name comparison rather than direct ID
+  const currentCategory = categoryId === 'todos' 
+    ? null 
+    : categories.find(cat => 
+        cat.id === categoryId || 
+        cat.name.toLowerCase().replace(/\s+/g, '-') === categoryId.toLowerCase());
   
   const pageTitle = 
     categoryId === 'todos' ? 'Todos os Produtos' : 
